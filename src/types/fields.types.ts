@@ -14,7 +14,7 @@ type RequiredFields = {
    * Формат представления — число, разделитель — точка, например: 123.45.
    * Сумма должна быть указана в рублях.
    */
-  OutSum: number;
+  OutSum: number | string;
   /**
    * Описание покупки, можно использовать только символы английского или
    * русского алфавита, цифры и знаки препинания. Максимальная длина —
@@ -123,6 +123,19 @@ type OptionalFields = {
    * цене, налоговой ставке и ставке НДС по каждой позиции.
    */
   Receipt: Receipt;
+
+  /**
+   * В случае, если магазину необходимо иметь возможность холдирования денежных
+   * средств — проведение операции делится на два этапа.
+   *
+   * На первом этапе пользователь производит обычный платеж по выставленному
+   * счету, но в отличие от обычного платежа в запросе на холдирование
+   * передается дополнительный параметр StepByStep со значением true.
+   *
+   * Уведомление об успешной предавторизации можно получить только используя
+   * запрос ResultURL2
+   */
+  StepByStep: boolean;
 };
 
 export type CustomFields = {
@@ -133,5 +146,16 @@ export type Fields = RequiredFields & Partial<OptionalFields> & CustomFields;
 export type SignaturePayload = Partial<
   Pick<RequiredFields, 'OutSum' | 'Description'>
 > &
-  Partial<Pick<OptionalFields, 'InvId' | 'UserIp' | 'Culture' | 'Receipt'>> &
+  Partial<
+    Pick<
+      OptionalFields,
+      'InvId' | 'UserIp' | 'Culture' | 'Receipt' | 'StepByStep'
+    >
+  > &
   CustomFields;
+
+export type CancelHoldDto = Pick<SignaturePayload, 'InvId' | 'OutSum'>;
+export type CreatePaymentBySavedCardDto = SignaturePayload & {
+  Token?: string;
+  ResultUrl2?: string;
+};

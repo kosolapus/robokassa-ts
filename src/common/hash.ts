@@ -14,8 +14,8 @@ export const sortCustomFields = (customFields: CustomFields): string[] => {
 
 export const createEncodedPayload = (
   key: string,
-  header: Record<string, any>,
-  payload: Record<string, any>,
+  header: Record<string, unknown>,
+  payload: Record<string, unknown>,
   hashMethod: HashMethod = HashMethod.MD5
 ) => {
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64');

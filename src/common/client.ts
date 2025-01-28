@@ -1,6 +1,10 @@
 import { ClientOptions } from '../types/client-options';
 import { HashMethod } from '../dict/hash-method';
-import { SignaturePayload } from '../types/fields.types';
+import {
+  CancelHoldDto,
+  CreatePaymentBySavedCardDto,
+  SignaturePayload,
+} from '../types/fields.types';
 import { InvoiceType } from '../types/invoice-type';
 import { createEncodedPayload, sortCustomFields } from './hash';
 import { getErrorByCode } from '../utils/getErrorByCode';
@@ -11,11 +15,10 @@ import { XMLParser } from 'fast-xml-parser';
 
 export class RobokassaClient {
   private links = {
-    simpleUrl: 'https://auth.robokassa.ru/Merchant/Index',
+    simpleUrl: 'https://auth.robokassa.ru/Merchant',
     xmlUrl: 'https://auth.robokassa.ru/Merchant/WebService/Service.asmx/',
     curl: 'https://auth.robokassa.ru/Merchant/Indexjson.aspx?',
-    jwtCreateLink:
-      'https://services.robokassa.ru/InvoiceServiceWebApi/api/CreateInvoice',
+    jwtCreateLink: 'https://services.robokassa.ru/InvoiceServiceWebApi/api',
   };
 
   private receipt: Receipt;
@@ -47,8 +50,8 @@ export class RobokassaClient {
   }
 
   private buildHashBase = (
-    payload: SignaturePayload,
-    customFields: string[]
+    payload: CreatePaymentBySavedCardDto,
+    customFields?: string[]
   ) => {
     const parts = [
       this.merchant,
@@ -58,6 +61,9 @@ export class RobokassaClient {
       payload.Receipt?.items?.length
         ? encodeURIComponent(JSON.stringify(payload.Receipt))
         : undefined,
+      payload.StepByStep,
+      payload.ResultUrl2,
+      payload.Token,
       this.password1,
       ...customFields,
     ];
@@ -73,12 +79,12 @@ export class RobokassaClient {
       Culture,
       Receipt,
       Description,
+      StepByStep,
       ...customFields
     } = partial;
     const sortedCustomFields = sortCustomFields(customFields);
 
     const hashBase = this.buildHashBase(partial, sortedCustomFields);
-    console.log(hashBase);
 
     const sign = createHash(this.hashMethod).update(hashBase).digest('hex');
 
@@ -96,6 +102,10 @@ export class RobokassaClient {
 
     if (Receipt) {
       params.append('Receipt', encodeURIComponent(JSON.stringify(Receipt)));
+    }
+
+    if (StepByStep) {
+      params.append('StepByStep', 'true');
     }
 
     if (Description) {
@@ -117,14 +127,11 @@ export class RobokassaClient {
       }
     }
 
-    console.log(params.toString());
-
     const response = await fetch(this.links.curl, {
       method: 'POST',
       body: params,
     }).then((r) => r.json());
 
-    console.log(response);
     if (response.errorCode && response.errorCode !== 0) {
       throw new Error(getErrorByCode(response.errorCode));
     }
@@ -136,18 +143,63 @@ export class RobokassaClient {
    */
   public async getLinkCurl(partial: SignaturePayload) {
     const invoiceId = await this.createInvoiceCurl(partial);
-    return `https://auth.robokassa.ru/Merchant/Index/${invoiceId}`;
+    return `${this.links.simpleUrl}/Index/${invoiceId}`;
   }
-
-  /**
-   * Деактивация созданного счета/ссылки
-   */
-  public deactivateInvoice: () => {};
 
   /**
    * Оплата по сохраненной карте
    */
-  public payBySavedCard: () => {};
+  public payBySavedCard = async (partial: CreatePaymentBySavedCardDto) => {
+    const hashBase = this.buildHashBase(partial);
+
+    const {
+      Receipt,
+      OutSum,
+      StepByStep,
+      UserIp,
+      InvId,
+      Culture,
+      Token,
+      ResultUrl2,
+      Description,
+    } = partial;
+
+    const signature = createHash(this.hashMethod)
+      .update(hashBase)
+      .digest('hex');
+
+    const body = new URLSearchParams({
+      MerchantLogin: this.merchant,
+      SignatureValue: signature,
+      OutSum: OutSum.toString(),
+      Token,
+      ResultUrl2,
+    });
+
+    if (Receipt) {
+      body.append('Receipt', encodeURIComponent(JSON.stringify(Receipt)));
+    }
+    if (StepByStep) {
+      body.append('StepByStep', 'true');
+    }
+    if (UserIp) {
+      body.append('UserIp', UserIp);
+    }
+    if (InvId) {
+      body.append('InvId', InvId.toString());
+    }
+    if (Culture) {
+      body.append('Culture', Culture.toString());
+    }
+    if (Description) {
+      body.append('Description', Description);
+    }
+
+    return await fetch(`${this.links.simpleUrl}/Payment/CoFPayment?`, {
+      method: 'POST',
+      body,
+    });
+  };
 
   /**
    * Создание ссылки без перенаправления на оплату (JWT)
@@ -159,8 +211,57 @@ export class RobokassaClient {
   ) {
     const payload = {
       ...partial,
+      InvoiceItems: partial.Receipt.items,
+      MerchantLogin: this.merchant,
       InvoiceType: invoiceType,
       MerchantComments: comment,
+    };
+
+    delete payload.Receipt;
+
+    const header = {
+      typ: 'JWT',
+      alg: this.hashMethod,
+    };
+
+    const hmacKey = `${this.merchant}:${this.password1}`;
+
+    const payloadString = createEncodedPayload(
+      hmacKey,
+      header,
+      payload,
+      this.hashMethod
+    );
+
+    console.log({
+      hmacKey,
+      header,
+      payload,
+      payloadString,
+      link: this.links.jwtCreateLink + '/CreateInvoice',
+    });
+
+    return await fetch(this.links.jwtCreateLink + '/CreateInvoice', {
+      method: 'POST',
+      body: payloadString,
+    }).then((r) => r.json());
+  }
+
+  /**
+   *
+   * @param InvId <b>EncodedId</b> (Последняя часть ссылки счета) или <b>Id</b>
+   * (Идентификатор счета, возвращается в ответе на запрос о создании счета.)
+   * или <b>InvId</b> (Номер счета указанный продавцом при создании ссылки. Если
+   * продавец не указывал номер счета, то он был сгенерирован автоматически.
+   * Возвращается в ответе на запрос о создании счета либо в личном кабинете
+   * в разделе "Выставление счетов".)
+   *
+   * Деактивация созданного счета/ссылки
+   */
+  public deactivateInvoice = async (InvId: number) => {
+    const payload = {
+      InvId,
+      MerchantLogin: this.merchant,
     };
 
     const header = {
@@ -177,26 +278,81 @@ export class RobokassaClient {
       this.hashMethod
     );
 
-    return await fetch(this.links.jwtCreateLink, {
+    return await fetch(this.links.jwtCreateLink + '/DeactivateInvoice', {
       method: 'POST',
       body: payloadString,
     }).then((r) => r.json());
-  }
+  };
 
   /**
    * Запрос на списание средств
    */
-  requestHold = () => {};
+  requestHold = (payload: SignaturePayload) => {
+    return this.getLinkCurl({
+      ...payload,
+      StepByStep: true,
+    });
+  };
 
   /**
    * Подтверждение списания средств
    */
-  confirmHold = () => {};
+  confirmHold = async (partial: SignaturePayload) => {
+    const signatureBase = [
+      this.merchant,
+      partial.OutSum,
+      partial.InvId,
+      partial.Receipt,
+      this.password1,
+    ]
+      .filter((f) => f !== undefined)
+      .join(':');
+    const signature = createHash(this.hashMethod)
+      .update(signatureBase)
+      .digest('hex');
+
+    const body = new URLSearchParams({
+      MerchantLogin: this.merchant,
+      InvoiceId: partial.InvId.toString(),
+      OutSum: partial.OutSum.toString(),
+      SignatureValue: signature,
+    });
+
+    return await fetch(`${this.links.simpleUrl}/Payment/Confirm`, {
+      method: 'POST',
+      body,
+    });
+  };
 
   /**
    * Отмена холдирования
    */
-  cancelHold = () => {};
+  cancelHold = async (payload: CancelHoldDto) => {
+    const { InvId, OutSum } = payload;
+    const body = new URLSearchParams();
+    const signatureBase = this.buildHashBase(
+      {
+        InvId,
+        StepByStep: undefined,
+        OutSum: '',
+      },
+      []
+    );
+
+    const signature = createHash(this.hashMethod)
+      .update(signatureBase)
+      .digest('hex');
+
+    body.append('MerchantLogin', this.merchant);
+    body.append('InvoiceId', InvId.toString());
+    body.append('SignatureValue', signature);
+    body.append('OutSum', OutSum.toString());
+
+    return fetch(`${this.links.simpleUrl}/Payment/Cancel`, {
+      method: 'POST',
+      body,
+    }).then((r) => r.json());
+  };
 
   /**
    * Возвращает список валют, доступных для оплаты заказов указанного
@@ -205,7 +361,27 @@ export class RobokassaClient {
    * оплаты непосредственно на вашем сайте, если вы желаете дать больше
    * информации своим клиентам.
    */
-  getCurrencyList = () => {};
+  getCurrencyList = async (lang: Language = Language.Ru) => {
+    const body = new URLSearchParams({
+      MerchantLogin: this.merchant,
+      Language: lang,
+    });
+
+    return await fetch(`${this.links.xmlUrl}GetCurrencies`, {
+      method: 'POST',
+      body,
+    }).then(async (r) => {
+      const xmlString = await r.text();
+      try {
+        const parser = new XMLParser({
+          ignoreAttributes: false,
+        });
+        return parser.parse(xmlString)?.CurrenciesList?.Groups;
+      } catch (e) {
+        throw new Error(e);
+      }
+    });
+  };
 
   /**
    * Возвращает детальную информацию о текущем состоянии и реквизитах оплаты.
@@ -229,7 +405,9 @@ export class RobokassaClient {
     }).then(async (r) => {
       const xmlString = await r.text();
       try {
-        const parser = new XMLParser();
+        const parser = new XMLParser({
+          ignoreAttributes: false,
+        });
         return parser.parse(xmlString)?.OperationStateResponse;
       } catch (e) {
         throw new Error(e);
