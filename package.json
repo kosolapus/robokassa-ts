@@ -1,10 +1,13 @@
 {
   "name": "robokassa-ts",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "module": "./dist/index.mjs",
-  "repository": "https://github.com/kosolapus/robokassa-ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kosolapus/robokassa-ts"
+  },
   "files": [
     "/dist"
   ],
