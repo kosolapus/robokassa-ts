@@ -65,7 +65,7 @@ const item: ReceiptItem = {
 // Добавление товара
 client.addItem(item);
 
-// Обновляем первый попашийся по предикату
+// Обновляем первый попавшийся по предикату
 client.updateItem(
   (item) => item.nomenclature_code === item.nomenclature_code,
   {
