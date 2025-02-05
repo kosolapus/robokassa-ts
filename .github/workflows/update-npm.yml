@@ -7,6 +7,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: Test
+    env:
+      MERCHANT:  ${{ secrets.MERCHANT }}
+      TEST_PASS_1:  ${{ secrets.TEST_PASS_1 }}
+      TEST_PASS_2:  ${{ secrets.TEST_PASS_2 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v3
