@@ -1,6 +1,4 @@
-import { Tax, TaxSize } from '../dict/tax';
-import { PaymentMethod } from '../dict/payment-method';
-import { PaymentObject } from '../dict/payment-object';
+import { Tax, TaxSize, PaymentMethod, PaymentObject } from '../dict';
 
 export type ReceiptItemWithoutSum = {
   cost: number;

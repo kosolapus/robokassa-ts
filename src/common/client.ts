@@ -1,5 +1,5 @@
 import { ClientOptions } from '../types/client-options';
-import { HashMethod } from '../dict/hash-method';
+import { HashMethod, Language } from '../dict';
 import {
   CancelHoldDto,
   CreatePaymentBySavedCardDto,
@@ -9,9 +9,9 @@ import { InvoiceType } from '../types/invoice-type';
 import { createEncodedPayload, sortCustomFields } from './hash';
 import { getErrorByCode } from '../utils/getErrorByCode';
 import { createHash } from 'crypto';
-import { Language } from '../dict/language';
-import { Receipt } from '../types/receipt';
+import { Receipt, ReceiptItem } from '../types/receipt';
 import { XMLParser } from 'fast-xml-parser';
+import { Cart } from './cart';
 
 export class RobokassaClient {
   private links = {
@@ -21,7 +21,6 @@ export class RobokassaClient {
     jwtCreateLink: 'https://services.robokassa.ru/InvoiceServiceWebApi/api',
   };
 
-  private receipt: Receipt;
   private merchant: string;
   private password1: string;
   private password2: string;
@@ -29,6 +28,8 @@ export class RobokassaClient {
   private testMode: boolean;
 
   private culture: Language;
+
+  private cart: Cart;
 
   constructor({
     merchant,
@@ -44,9 +45,8 @@ export class RobokassaClient {
     this.hashMethod = hashMethod;
     this.testMode = testMode;
     this.culture = culture;
-    this.receipt = {
-      items: [],
-    };
+
+    this.cart = new Cart();
   }
 
   private buildHashBase = (
@@ -65,7 +65,7 @@ export class RobokassaClient {
       payload.ResultUrl2,
       payload.Token,
       this.password1,
-      ...customFields,
+      ...(customFields || []),
     ];
 
     return parts.filter((p) => p !== undefined).join(':');
@@ -85,17 +85,19 @@ export class RobokassaClient {
     const sortedCustomFields = sortCustomFields(customFields);
 
     const hashBase = this.buildHashBase(partial, sortedCustomFields);
-
     const sign = createHash(this.hashMethod).update(hashBase).digest('hex');
-
     const params = new URLSearchParams();
 
     params.append('MerchantLogin', this.merchant);
+
     if (OutSum) {
       params.append('OutSum', OutSum.toString());
     }
 
-    params.append('InvId', InvId.toString());
+    if (InvId) {
+      params.append('InvId', InvId.toString());
+    }
+
     params.append('Culture', Culture || this.culture || Language.Ru);
     params.append('IsTest', this.testMode ? '1' : '0');
     params.append('Encoding', 'UTF-8');
@@ -232,14 +234,6 @@ export class RobokassaClient {
       payload,
       this.hashMethod
     );
-
-    console.log({
-      hmacKey,
-      header,
-      payload,
-      payloadString,
-      link: this.links.jwtCreateLink + '/CreateInvoice',
-    });
 
     return await fetch(this.links.jwtCreateLink + '/CreateInvoice', {
       method: 'POST',
@@ -444,22 +438,66 @@ export class RobokassaClient {
    */
   onSuccessUrl = () => {};
 
-  addItem = (payload) => {
-    this.receipt.items.push(payload);
+  addItem = (payload: ReceiptItem) => {
+    this.cart.add(payload);
   };
 
-  deleteItem = () => {
-    this.receipt.items.splice(this.receipt.items.length - 1, 1);
+  deleteItem = (predicate: (item: ReceiptItem) => boolean) => {
+    this.cart.remove(predicate);
   };
 
-  updateItem = (payload) => {
-    this.receipt.items.splice(0, 1, payload);
+  updateItem = (
+    predicate: (item: ReceiptItem) => boolean,
+    payload: Partial<ReceiptItem>
+  ) => {
+    this.cart.update(predicate, payload);
   };
 
   getList = () => {
-    return this.receipt.items;
+    return this.cart.getList();
   };
 
-  validateReceipt = () => true;
+  /**
+   * Создает заказ с собранной корзиной
+   */
+  getCartLink(
+    partial: Omit<SignaturePayload, 'Receipt'>,
+    sno?: Receipt['sno']
+  ) {
+    try {
+      this.cart.validate();
+      const total = this.cart.getList().reduce((total, item) => {
+        if (item.sum !== undefined) {
+          total += item.sum;
+        } else {
+          total += item.cost * item.quantity;
+        }
+
+        return total;
+      }, 0);
+      if (Number(total) !== Number(partial.OutSum)) {
+        throw new Error(
+          'Сумма всех позиций в чеке должна быть равна сумме операции'
+        );
+      }
+      return this.getLinkCurl({
+        ...partial,
+        Receipt: {
+          sno,
+          items: this.cart.getList(),
+        },
+      });
+    } catch (e) {
+      throw new Error(e);
+    }
+  }
+
+  /**
+   * Очищает корзину
+   */
+  clearCart() {
+    this.cart = new Cart();
+  }
+
   sendSecondReceipt = () => false;
 }
