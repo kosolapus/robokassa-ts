@@ -52,7 +52,7 @@ TBD;
 
 ```typescript
 
-const item: ReceiptItem = {
+const itemData: ReceiptItem = {
   name: 'Товар без цены',
   sum: 36,
   quantity: 3,
@@ -67,7 +67,7 @@ client.addItem(item);
 
 // Обновляем первый попавшийся по предикату
 client.updateItem(
-  (item) => item.nomenclature_code === item.nomenclature_code,
+  (item) => itemData.nomenclature_code === item.nomenclature_code,
   {
     quantity: 22,
   }
@@ -75,13 +75,13 @@ client.updateItem(
 
 // Удаление - аналогично
 client.deleteItem(
-  (item) => item.nomenclature_code === item.nomenclature_code
+  (item) => itemData.nomenclature_code === item.nomenclature_code
 );
 
 // После обработки корзины - создаем ссылку на оплату
 const result = await client.getCartLink({
   OutSum: 1, // Сумма должна совпадать с суммой всех позиций корзины
-  // Так же можно дополнить параметрами для обычной ссылки
+  // Также можно дополнить параметрами для обычной ссылки
   InvId: 3
 });
 
@@ -89,7 +89,7 @@ const result = await client.getCartLink({
 // Применим, когда магазин имеет больше 1 системы налогообложения
 const resultWithTax = await client.getCartLink({
   OutSum: 1, // Сумма должна совпадать с суммой всех позиций корзины
-  // Так же можно дополнить параметрами для обычной ссылки
+  // Также можно дополнить параметрами для обычной ссылки
   InvId: 3
 }, Tax.ESN);
 
